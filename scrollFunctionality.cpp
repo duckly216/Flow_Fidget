@@ -1,3 +1,4 @@
+#include <Arduino.h>
 const int joyX = A0;
 const int joyY = A1;
 const int joySW = 7;
