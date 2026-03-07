@@ -24,6 +24,9 @@
 const int BUTTON_PIN = 3;   // mode/power button  (INPUT_PULLUP)
 const int STICK_BTN  = 2;   // joystick click     (INPUT_PULLUP, unused here)
 
+const int JOY_X = A0;
+const int JOY_Y = A1;
+
 const int RGB_R = 9;
 const int RGB_G = 10;
 const int RGB_B = 6;
@@ -31,6 +34,21 @@ const int RGB_B = 6;
 const int LED_RED    = 11;  // pomodoro 1
 const int LED_YELLOW = 12;  // pomodoro 2
 const int LED_GREEN  = 13;  // pomodoro 3
+
+const int BUZZER_PIN = 5;
+
+// ── Scroll Config ───────────────────────────────────────────────────────────
+const int  JOY_CENTER  = 512;
+const int  DEAD_ZONE   = 60;
+const int  SCROLL_MAX  = 10;
+const unsigned long SCROLL_INTERVAL_MS = 50;
+const unsigned long IDLE_YELLOW_MS = 20000UL;
+const unsigned long IDLE_FLASH_MS  = 40000UL;
+const unsigned long IDLE_ALARM_MS  = 60000UL;
+const unsigned long FLASH_PERIOD_MS    = 500;       // on/off toggle for flash stage
+
+unsigned long lastScrollTick  = 0;
+unsigned long lastActivityTime = 0;
 
 // ── State ──────────────────────────────────────────────────────────────────────
 int           currentState  = TIMER_IDLE;
@@ -220,6 +238,7 @@ void setup() {
   pinMode(LED_RED,    OUTPUT);
   pinMode(LED_YELLOW, OUTPUT);
   pinMode(LED_GREEN,  OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
 
   enterIdle();
 }
@@ -235,10 +254,51 @@ void loop() {
       setRGB(0, 0, 255);
       holdButton();
       break;
-    case STATE_SCROLL:
+    case STATE_SCROLL: {
       setRGB(135, 61, 22);
-      holdButton();
+      holdButton();   
+      int rawY = analogRead(JOY_Y);
+      int offset = rawY - JOY_CENTER;
+      bool active = abs(offset) > DEAD_ZONE;
+
+      if (active) {
+        lastActivityTime = millis();
+        noTone(BUZZER_PIN);
+      }
+
+      if (active && millis() - lastScrollTick >= SCROLL_INTERVAL_MS) {
+        lastScrollTick = millis();
+        int direction = (offset > 0) ? 1 : -1;
+        int magnitude = abs(offset) - DEAD_ZONE;
+        int speed = map(magnitude, 0, JOY_CENTER - DEAD_ZONE, 1, SCROLL_MAX);
+        speed = constrain(speed, 1, SCROLL_MAX);
+
+        Serial.print(F("SCROLL:"));
+        Serial.print(direction * speed);
+        Serial.print(F(":"));
+        Serial.println(speed);
+      }
+
+      unsigned long idleTime = millis() - lastActivityTime;
+
+      if (idleTime < IDLE_YELLOW_MS) {
+        setRGB(0, 255, 0);
+      } else if (idleTime < IDLE_FLASH_MS) {
+        setRGB(255, 200, 0);
+      } else if (idleTime < IDLE_ALARM_MS) {
+        bool flashOn = (millis() / FLASH_PERIOD_MS) % 2 == 0;
+        if (flashOn) {
+          setRGB(255, 200, 0);
+        } else {
+          setRGB(0, 0, 0);
+        }
+      } else {
+        setRGB(255, 0, 0);
+        tone(BUZZER_PIN, 1000);
+      }
       break;
+    }
+
   } 
 
 }
