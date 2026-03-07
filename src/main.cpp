@@ -64,51 +64,56 @@ void loop() {
   switch (currentState) {
     case STATE_OFF:
       // Button is being pressed and it was NOT being pressed originally
-      if(buttonValue == LOW && isHolding == false){
+      // Serial.println("Gadget currently off");
+
+      if(buttonValue == LOW && !isHolding){
         pressStartTime = millis();
         isHolding = true;
-        Serial.println("Button Pressing Initialized");
-        
+        // Serial.println("Button Pressing Initialized");
       }
       if(buttonValue == LOW && isHolding){
         unsigned long duration = millis() - pressStartTime;
-        if(duration > 3000){
-          digitalWrite(yellow, HIGH);
-          digitalWrite(yellow, LOW);
+        // At 1 seconds, turn on the first indicator
+        if (duration > 1000) {digitalWrite(yellow, HIGH);}
+        
+        // At 3 seconds, turn on the second indicator (Yellow/RGB)
+        if (duration > 3000) {digitalWrite(green, HIGH);}
+        // At 5 seconds, BOOM - Power On
+        if (duration >= 5000) {
+            currentState = STATE_FIDGET;
+            isHolding = false;
+            digitalWrite(yellow, LOW);
+            
+            digitalWrite(green, LOW); delay(200);
+            digitalWrite(green, HIGH); delay(200);
+            digitalWrite(green, LOW); delay(200);
+            digitalWrite(green, HIGH); delay(200); 
+            digitalWrite(green, LOW);
+            // Turn everything off or flash green to signal "Ready"
         }
-
-
       }
-    break;
+      if(buttonValue == HIGH){
+        isHolding = false;
+        digitalWrite(yellow, LOW);
+        digitalWrite(green, LOW);
+      }
+      break;
     case STATE_FIDGET:
-      
+      setStatusColor(0,0,255);
     break;
     case STATE_SCROLL:
       
     break;
   } 
 
-  // // RIGHT
-  // if (xValue > 800) {
-  //   digitalWrite(11, HIGH);
-  // } else {
-  //   digitalWrite(11, LOW);
-  // }
-  // if (stickbValue == LOW) {
-  //   digitalWrite(12, HIGH);
-  // } else {
-  //   digitalWrite(12, LOW);
-  // }
-  // // LEFT
-  // if (xValue < 200) {
-  //   digitalWrite(13, HIGH);
-  // } else {
-  //   digitalWrite(13, LOW);
-  // }
-
 }
 
 // put function definitions here:
 int myFunction(int x, int y) {
   return x + y;
+}
+void setStatusColor(int r, int g, int b){
+  analogWrite(rgb_RED, r);
+  analogWrite(rgb_GREEN, g);
+  analogWrite(rgb_BLUE, b);
 }
