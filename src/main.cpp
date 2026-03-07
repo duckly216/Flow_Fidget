@@ -99,7 +99,7 @@ void printTime(const char* label, unsigned long remainingMs) {
   Serial.println(s);
 }
 
-// ── State Transitions ──────────────────────────────────────────────────────────
+// ── Timer State Transitions ──────────────────────────────────────────────────────────
 void enterIdle() {
   currentState = TIMER_IDLE;
   clearAll();
@@ -114,6 +114,88 @@ void enterWork() {
   setRGB(255, 0, 0);  // red = focus
   showCount();
   Serial.println(F("[WORK] 25:00 started"));
+}
+
+// ── Gadget State Transitions ──────────────────────────────────────────────────────────
+void transitionTo(int newState) {
+    currentState = newState;
+
+    switch (newState) {
+        case STATE_OFF:
+            Serial.println("System: Powered Off");
+            setRGB(0, 0, 0); // Turn off RGB
+            digitalWrite(LED_YELLOW, LOW);
+            digitalWrite(LED_GREEN, LOW);
+            break;
+
+        case STATE_FIDGET:
+            Serial.println("System: Fidget Mode");
+            setRGB(0, 0, 255); // Blue for Fidget
+            break;
+
+        case STATE_SCROLL:
+            Serial.println("System: Scroll Mode");
+            setRGB(135, 61, 22); // Green for Scroll
+            break;
+    }
+}
+// ── Button Inputs ──────────────────────────────────────────────────────────
+void holdButton() {
+  int BUTTON_VALUE = digitalRead(BUTTON_PIN);
+  int FOCUS_LED = 0;
+  int going_into_state = 0;
+  // If device off, green light will turn on - indicates turning on
+  // If device on, red light will turn on - indicates turning off
+  if(currentState == STATE_OFF){
+    FOCUS_LED = LED_GREEN;
+    going_into_state = STATE_FIDGET;
+  }
+  if(currentState == STATE_FIDGET or currentState == STATE_SCROLL){
+    FOCUS_LED = LED_RED;
+    going_into_state = STATE_OFF;
+  }
+
+
+  if(BUTTON_VALUE == LOW && !isHolding){
+        pressStartTime = millis();
+        isHolding = true;
+        // Serial.println("Button Pressing Initialized");
+      }
+      if(BUTTON_VALUE == LOW && isHolding){
+        unsigned long duration = millis() - pressStartTime;
+        // At 1 seconds, turn on the Yellow LED
+        if (duration > 1000) {digitalWrite(LED_YELLOW, HIGH);}
+        
+        // At 3 seconds, turn on the Green LED
+        if (duration > 3000) {
+          digitalWrite(FOCUS_LED, HIGH);
+        }
+        // At 5 seconds, Power On
+        if (duration >= 5000) {
+            currentState = going_into_state;
+            isHolding = false;
+            digitalWrite(LED_YELLOW, LOW);
+            setRGB(0, 0, 0);
+            
+            digitalWrite(FOCUS_LED, LOW); delay(200);
+            digitalWrite(FOCUS_LED, HIGH); delay(200);
+            digitalWrite(FOCUS_LED, LOW); delay(200);
+            digitalWrite(FOCUS_LED, HIGH); delay(200); 
+            digitalWrite(FOCUS_LED, LOW);
+            // Turn everything off or flash green to signal "Ready"
+        }
+      }
+      if(BUTTON_VALUE == HIGH){
+        isHolding = false;
+        clearAll();
+      }
+  // switch (currentState) {
+  //   case STATE_OFF:
+  //     transitionTo(STATE_FIDGET);
+  //     break;
+  //   case STATE_FIDGET or STATE_SCROLL:
+  //     transitionTo(STATE_SCROLL);
+  //     break;
 }
 
 void enterBreak(unsigned long duration) {
@@ -166,45 +248,15 @@ void loop() {
   int BUTTON_VALUE = digitalRead(BUTTON_PIN);
   switch (currentState) {
     case STATE_OFF:
-      // Button is being pressed and it was NOT being pressed originally
-      // Serial.println("Gadget currently off");
-
-      if(BUTTON_VALUE == LOW && !isHolding){
-        pressStartTime = millis();
-        isHolding = true;
-        // Serial.println("Button Pressing Initialized");
-      }
-      if(BUTTON_VALUE == LOW && isHolding){
-        unsigned long duration = millis() - pressStartTime;
-        // At 1 seconds, turn on the Yellow LED
-        if (duration > 1000) {digitalWrite(LED_YELLOW, HIGH);}
-        
-        // At 3 seconds, turn on the Green LED
-        if (duration > 3000) {digitalWrite(LED_GREEN, HIGH);}
-        // At 5 seconds, Power On
-        if (duration >= 5000) {
-            currentState = STATE_SCROLL;
-            lastActivityTime = millis();
-            isHolding = false;
-            digitalWrite(LED_YELLOW, LOW);
-            
-            digitalWrite(LED_GREEN, LOW); delay(200);
-            digitalWrite(LED_GREEN, HIGH); delay(200);
-            digitalWrite(LED_GREEN, LOW); delay(200);
-            digitalWrite(LED_GREEN, HIGH); delay(200); 
-            digitalWrite(LED_GREEN, LOW);
-            // Turn everything off or flash green to signal "Ready"
-        }
-      }
-      if(BUTTON_VALUE == HIGH){
-        isHolding = false;
-        clearAll();
-      }
+      holdButton();
       break;
     case STATE_FIDGET:
       setRGB(0, 0, 255);
-    break;
+      holdButton();
+      break;
     case STATE_SCROLL: {
+      setRGB(135, 61, 22);
+      holdButton();   
       int rawY = analogRead(JOY_Y);
       int offset = rawY - JOY_CENTER;
       bool active = abs(offset) > DEAD_ZONE;
@@ -246,6 +298,7 @@ void loop() {
       }
       break;
     }
+
   } 
 
 }
