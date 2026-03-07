@@ -138,87 +138,50 @@ void setup() {
 
 // ── Loop ───────────────────────────────────────────────────────────────────────
 void loop() {
-  unsigned long now = millis();
-
-  // ── Button: debounce + short/long press ─────────────────────────────────────
-  bool btnRaw = digitalRead(BUTTON_PIN);
-
-  if (btnRaw != lastBtnRaw) lastDebounce = now;
-
-  if ((now - lastDebounce) > DEBOUNCE_MS) {
-    // Falling edge: button just pressed
-    if (btnRaw == LOW && lastBtnRaw == HIGH) {
-      btnPressTime = now;
-      btnHandled   = false;
-    }
-
-    // Still held: check for long press (reset)
-    if (btnRaw == LOW && !btnHandled) {
-      if ((now - btnPressTime) >= LONG_PRESS_MS) {
-        btnHandled = true;
-        resetAll();
-      }
-    }
-
-    // Rising edge: short press (start / acknowledge)
-    if (btnRaw == HIGH && lastBtnRaw == LOW && !btnHandled) {
-      btnHandled = true;
-      if (currentState == STATE_IDLE) {
-        enterWork();
-      }
-    }
-  }
-  lastBtnRaw = btnRaw;
-
-  // ── State Machine ────────────────────────────────────────────────────────────
   switch (currentState) {
+    case STATE_OFF:
+      // Button is being pressed and it was NOT being pressed originally
+      // Serial.println("Gadget currently off");
 
-    case STATE_IDLE: {
-      // Slow blue breathing effect
-      uint8_t breath = (uint8_t)(128 + 127 * sin(now / 1200.0));
-      setRGB(0, 0, breath);
-      break;
-    }
-
-    case STATE_WORK:
-    case STATE_BREAK: {
-      unsigned long elapsed   = now - sessionStart;
-      unsigned long remaining = (elapsed < sessionLen) ? (sessionLen - elapsed) : 0;
-
-      // Serial countdown every second
-      static unsigned long lastPrint = 0;
-      if (now - lastPrint >= 1000UL) {
-        lastPrint = now;
-        printTime(currentState == STATE_WORK ? "WORK  " : "BREAK ", remaining);
+      if(buttonValue == LOW && !isHolding){
+        pressStartTime = millis();
+        isHolding = true;
+        // Serial.println("Button Pressing Initialized");
       }
-
-      if (elapsed >= sessionLen) {
-        if (currentState == STATE_WORK) {
-          pomodoroCount++;
-          enterAlert(STATE_BREAK);  // always go to break next; duration decided in alert handler
-        } else {
-          // Break finished: always loop back into work
-          if (pomodoroCount >= 4) pomodoroCount = 0;
-          enterAlert(STATE_WORK);
+      if(buttonValue == LOW && isHolding){
+        unsigned long duration = millis() - pressStartTime;
+        // At 1 seconds, turn on the first indicator
+        if (duration > 1000) {digitalWrite(yellow, HIGH);}
+        
+        // At 3 seconds, turn on the second indicator (Yellow/RGB)
+        if (duration > 3000) {digitalWrite(green, HIGH);}
+        // At 5 seconds, BOOM - Power On
+        if (duration >= 5000) {
+            currentState = STATE_FIDGET;
+            isHolding = false;
+            digitalWrite(yellow, LOW);
+            
+            digitalWrite(green, LOW); delay(200);
+            digitalWrite(green, HIGH); delay(200);
+            digitalWrite(green, LOW); delay(200);
+            digitalWrite(green, HIGH); delay(200); 
+            digitalWrite(green, LOW);
+            // Turn everything off or flash green to signal "Ready"
         }
       }
-      break;
-    }
-
-    case STATE_ALERT: {
-      // Flash all lights white every 300 ms
-      bool on = ((now - alertStart) / 300UL) % 2 == 0;
-      setRGB(on ? 255 : 0, on ? 255 : 0, on ? 255 : 0);
-      digitalWrite(LED_RED,    on ? HIGH : LOW);
-      digitalWrite(LED_YELLOW, on ? HIGH : LOW);
-      digitalWrite(LED_GREEN,  on ? HIGH : LOW);
-
-      if ((now - alertStart) >= ALERT_DURATION) {
-        if (nextState == STATE_WORK)       enterWork();
-        else if (nextState == STATE_BREAK) enterBreak(pomodoroCount >= 4 ? LONG_BREAK_DURATION : SHORT_BREAK_DURATION);
-        else                               enterIdle();
+      if(buttonValue == HIGH){
+        isHolding = false;
+        digitalWrite(yellow, LOW);
+        digitalWrite(green, LOW);
       }
       break;
-    }
-  }
+    case STATE_FIDGET:
+      setRGB(0,0,255);
+    break;
+    case STATE_SCROLL:
+      
+    break;
+  } 
+
 }
+
