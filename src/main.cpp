@@ -57,10 +57,28 @@ void loop() {
   int xValue = analogRead(xPin);
   int yValue = analogRead(yPin);
   int stickbValue = digitalRead(stickbuttonPin);
+  int buttonValue = digitalRead(buttonPin);
+
+
 
   switch (currentState) {
     case STATE_OFF:
-      
+      // Button is being pressed and it was NOT being pressed originally
+      if(buttonValue == LOW && isHolding == false){
+        pressStartTime = millis();
+        isHolding = true;
+        Serial.println("Button Pressing Initialized");
+        
+      }
+      if(buttonValue == LOW && isHolding){
+        unsigned long duration = millis() - pressStartTime;
+        if(duration > 3000){
+          digitalWrite(yellow, HIGH);
+          digitalWrite(yellow, LOW);
+        }
+
+
+      }
     break;
     case STATE_FIDGET:
       
