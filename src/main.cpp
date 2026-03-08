@@ -1,39 +1,25 @@
 #include <Arduino.h>
 #include <math.h>
-// ── Device States ─────────────────────────────────────────────────────────────────────
-#define STATE_OFF 0
+
+// ── Device States ───────────────────────────────────────────────────────────
+#define STATE_OFF    0
 #define STATE_FIDGET 1
 #define STATE_SCROLL 2
 
-// ── Timer States ─────────────────────────────────────────────────────────────────────
-#define TIMER_IDLE  0
-#define TIMER_WORK  1
-#define TIMER_BREAK 2
-#define TIMER_ALERT 3
-
-// ── Timing ─────────────────────────────────────────────────────────────────────
-#define WORK_DURATION       (25UL * 60UL * 1000UL)  // 25 minutes
-#define SHORT_BREAK_DURATION (5UL * 60UL * 1000UL)  //  5 minutes (after sessions 1–3)
-#define LONG_BREAK_DURATION (15UL * 60UL * 1000UL)  // 15 minutes (after session 4)
-#define ALERT_DURATION      (10UL * 1000UL)          // 10 s alert flash
-
-#define DEBOUNCE_MS   50
-#define LONG_PRESS_MS 1000
-
-// ── Pins ───────────────────────────────────────────────────────────────────────
-const int BUTTON_PIN = 3;   // mode/power button  (INPUT_PULLUP)
-const int STICK_BTN  = 2;   // joystick click     (INPUT_PULLUP, unused here)
+// ── Pins ────────────────────────────────────────────────────────────────────
+const int BUTTON_PIN = 3;
+const int STICK_BTN  = 2;
 
 const int JOY_X = A0;
 const int JOY_Y = A1;
 
 const int RGB_R = 9;
-const int RGB_G = 6;
-const int RGB_B = 10;
+const int RGB_G = 10;
+const int RGB_B = 6;
 
-const int LED_RED    = 11;  // pomodoro 1
-const int LED_YELLOW = 12;  // pomodoro 2
-const int LED_GREEN  = 13;  // pomodoro 3
+const int LED_RED    = 11;
+const int LED_YELLOW = 12;
+const int LED_GREEN  = 13;
 
 const int BUZZER_PIN = 8;
 
@@ -42,34 +28,22 @@ const int  JOY_CENTER  = 512;
 const int  DEAD_ZONE   = 60;
 const int  SCROLL_MAX  = 10;
 const unsigned long SCROLL_INTERVAL_MS = 50;
-const unsigned long IDLE_YELLOW_MS = 20000UL;
-const unsigned long IDLE_FLASH_MS  = 40000UL;
-const unsigned long IDLE_ALARM_MS  = 60000UL;
-const unsigned long FLASH_PERIOD_MS    = 500;       // on/off toggle for flash stage
 
-unsigned long lastScrollTick  = 0;
-unsigned long lastActivityTime = 0;
+unsigned long lastScrollTick    = 0;
 
-// ── State ──────────────────────────────────────────────────────────────────────
-int           currentState  = STATE_OFF;
-int           currentTimerState= TIMER_IDLE;
-int           nextState     = TIMER_WORK;
-unsigned long sessionStart  = 0;
-unsigned long sessionLen    = 0;
-unsigned long alertStart    = 0;
-int           pomodoroCount = 0;  // 0–4: sessions completed in current set
-unsigned long pressStartTime = 0;
-unsigned long lastReleaseTime = 0;
-int clickCount = 0;
-bool isHolding = false;
+// ── Device State ────────────────────────────────────────────────────────────
+int           currentState     = STATE_OFF;
 
-// Button debounce
-bool          lastBtnRaw    = HIGH;
-unsigned long lastDebounce  = 0;
-unsigned long btnPressTime  = 0;
-bool          btnHandled    = false;
+// ── Inactivity Tracking ─────────────────────────────────────────────────────
+unsigned long lastActivityTime  = 0;
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// ── Button State ────────────────────────────────────────────────────────────
+unsigned long pressStartTime   = 0;
+unsigned long lastReleaseTime  = 0;
+int           clickCount       = 0;
+bool          isHolding        = false;
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
 void setRGB(uint8_t r, uint8_t g, uint8_t b) {
   analogWrite(RGB_R, r);
   analogWrite(RGB_G, g);
@@ -83,219 +57,221 @@ void clearAll() {
   digitalWrite(LED_GREEN,  LOW);
 }
 
-// LEDs show completed sessions: 1 = red, 2 = +yellow, 3 = +green, 4 = all on
-void showCount() {
-  digitalWrite(LED_RED,    pomodoroCount >= 1 ? HIGH : LOW);
-  digitalWrite(LED_YELLOW, pomodoroCount >= 2 ? HIGH : LOW);
-  digitalWrite(LED_GREEN,  pomodoroCount >= 3 ? HIGH : LOW);
-  // All three lit = 4th session done (long break coming)
+void showModeColor(int state) {
+  switch (state) {
+    case STATE_FIDGET:
+      setRGB(135, 61, 22);
+      break;
+
+    case STATE_SCROLL:
+      setRGB(0, 0, 255);
+      break;
+
+    default:
+      setRGB(0, 0, 0);
+      break;
+  }
 }
 
-void printTime(const char* label, unsigned long remainingMs) {
-  unsigned int m = remainingMs / 60000UL;
-  unsigned int s = (remainingMs % 60000UL) / 1000UL;
-  Serial.print(label);
-  if (m < 10) Serial.print('0');
-  Serial.print(m);
-  Serial.print(':');
-  if (s < 10) Serial.print('0');
-  Serial.println(s);
+void printModeBanner(int state) {
+  switch (state) {
+    case STATE_OFF:
+      Serial.println(F("MODE:OFF"));
+      break;
+
+    case STATE_FIDGET:
+      Serial.println(F("MODE:FIDGET"));
+      break;
+
+    case STATE_SCROLL:
+      Serial.println(F("MODE:SCROLL"));
+      break;
+  }
 }
 
-// ── Timer State Transitions ──────────────────────────────────────────────────────────
-void enterIdle() {
-  currentTimerState = TIMER_IDLE;
-  clearAll();
-  showCount();
-  Serial.println(F("[IDLE] press button to start"));
+// ── Inactivity Detection ────────────────────────────────────────────────────
+bool checkActivity() {
+  int rawX = analogRead(JOY_X);
+  int rawY = analogRead(JOY_Y);
+  bool joyActive = (abs(rawX - JOY_CENTER) > DEAD_ZONE) ||
+                   (abs(rawY - JOY_CENTER) > DEAD_ZONE);
+  bool btnActive = (digitalRead(BUTTON_PIN) == LOW) ||
+                   (digitalRead(STICK_BTN) == LOW);
+
+  if (joyActive || btnActive) {
+    lastActivityTime = millis();
+    return true;
+  }
+  return false;
 }
 
-void enterWork() {
-  currentTimerState = TIMER_WORK;
-  sessionStart = millis();
-  sessionLen   = WORK_DURATION;
-  setRGB(255, 0, 0);  // red = focus
-  showCount();
-  Serial.println(F("[WORK] 25:00 started"));
+void updateInactivityLEDs() {
+  unsigned long idle = millis() - lastActivityTime;
+
+  digitalWrite(LED_GREEN,  LOW);
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_RED,    LOW);
+  noTone(BUZZER_PIN);
+
+  if (idle < 20000UL) {
+    digitalWrite(LED_GREEN, HIGH);
+  } else if (idle < 40000UL) {
+    digitalWrite(LED_YELLOW, HIGH);
+  } else if (idle < 60000UL) {
+    digitalWrite(LED_YELLOW, (millis() % 500 < 250) ? HIGH : LOW);
+  } else {
+    digitalWrite(LED_RED, HIGH);
+    tone(BUZZER_PIN, 1000);
+  }
 }
 
-// ── Gadget State Transitions ──────────────────────────────────────────────────────────
+// ── Device State Transitions ────────────────────────────────────────────────
 void transitionTo(int newState) {
-    currentState = newState;
+  currentState = newState;
 
-    switch (newState) {
-        case STATE_OFF:
-            Serial.println("System: Powered Off");
-            setRGB(0, 0, 0); // Turn off RGB
-            digitalWrite(LED_YELLOW, LOW);
-            digitalWrite(LED_GREEN, LOW);
-            break;
+  switch (newState) {
+    case STATE_OFF:
+      Serial.println(F("System: Powered Off"));
+      noTone(BUZZER_PIN);
+      clearAll();
+      printModeBanner(newState);
+      break;
 
-        case STATE_FIDGET:
-            Serial.println("System: Fidget Mode"); 
-            setRGB(135, 61, 22); // White for Fidget
-            break;
+    case STATE_FIDGET:
+      Serial.println(F("System: Fidget Mode"));
+      lastActivityTime = millis();
+      showModeColor(newState);
+      printModeBanner(newState);
+      break;
 
-        case STATE_SCROLL:
-            Serial.println("System: Scroll Mode");
-            setRGB(0, 0, 255); // Blue for Scroll
-            break;
-    }
+    case STATE_SCROLL:
+      Serial.println(F("System: Scroll Mode"));
+      lastActivityTime = millis();
+      showModeColor(newState);
+      printModeBanner(newState);
+      break;
+  }
 }
-// ── Button Inputs ──────────────────────────────────────────────────────────
+
+// ── Button Interaction ──────────────────────────────────────────────────────
 void buttonInteraction() {
-  int BUTTON_VALUE = digitalRead(BUTTON_PIN);
-  int FOCUS_LED = 0;
-  int going_into_state = 0;
-  // If device off, green light will turn on - indicates turning on
-  // If device on, red light will turn on - indicates turning off
-  if(currentState == STATE_OFF){
-    FOCUS_LED = LED_GREEN;
-    going_into_state = STATE_SCROLL;
-  }
-  if(currentState == STATE_FIDGET or currentState == STATE_SCROLL){
-    FOCUS_LED = LED_RED;
-    going_into_state = STATE_OFF;
+  int btnVal = digitalRead(BUTTON_PIN);
+
+  // Which LED lights up during long-press, and what state do we go to?
+  int focusLed      = LED_GREEN;
+  int longPressGoal = STATE_SCROLL;
+
+  if (currentState == STATE_FIDGET || currentState == STATE_SCROLL) {
+    focusLed      = LED_RED;
+    longPressGoal = STATE_OFF;
   }
 
+  // ── Long-press detection ──────────────────────────────────────────────────
+  if (btnVal == LOW && !isHolding) {
+    pressStartTime = millis();
+    isHolding = true;
+  }
 
-  if(BUTTON_VALUE == LOW && !isHolding){
-        pressStartTime = millis();
-        isHolding = true;
-        // Serial.println("Button Pressing Initialized");
-      }
-  if(BUTTON_VALUE == LOW && isHolding){
+  if (btnVal == LOW && isHolding) {
     unsigned long duration = millis() - pressStartTime;
-    // At 1 seconds, turn on the Yellow LED
-    if (duration > 1000) {digitalWrite(LED_YELLOW, HIGH);}
-    
-    // At 3 seconds, turn on the Green LED
-    if (duration > 3000) {
-      digitalWrite(FOCUS_LED, HIGH);
-    }
-    // At 5 seconds, Power On/Off
+
+    if (duration > 1000) { digitalWrite(LED_YELLOW, HIGH); }
+    if (duration > 3000) { digitalWrite(focusLed, HIGH); }
+
     if (duration >= 5000) {
-        currentState = going_into_state;
-        if(currentState == STATE_OFF) Serial.println("System: Powered Off");
-        if(currentState == STATE_FIDGET) Serial.println("System: Fidget Mode");
-        if(currentState == STATE_SCROLL) Serial.println("System: Scroll Mode");
-        isHolding = false;
-        digitalWrite(LED_YELLOW, LOW);
-        setRGB(0, 0, 0);
-        
-        digitalWrite(FOCUS_LED, LOW); delay(200);
-        digitalWrite(FOCUS_LED, HIGH); delay(200);
-        digitalWrite(FOCUS_LED, LOW); delay(200);
-        digitalWrite(FOCUS_LED, HIGH); delay(200); 
-        digitalWrite(FOCUS_LED, LOW);
-        // Turn everything off or flash green to signal "Ready"
+      transitionTo(longPressGoal);
+      isHolding = false;
+      digitalWrite(LED_YELLOW, LOW);
+
+      // Confirmation blink
+      digitalWrite(focusLed, LOW);  delay(200);
+      digitalWrite(focusLed, HIGH); delay(200);
+      digitalWrite(focusLed, LOW);  delay(200);
+      digitalWrite(focusLed, HIGH); delay(200);
+      digitalWrite(focusLed, LOW);
+
+      showModeColor(currentState);
     }
   }
-  // CLICKED SHORTLY
-  if (BUTTON_VALUE == HIGH && isHolding) {
+
+  // ── Short-tap detection (on release) ──────────────────────────────────────
+  if (btnVal == HIGH && isHolding) {
     unsigned long duration = millis() - pressStartTime;
     isHolding = false;
 
-    // Reset indicator LEDs immediately on release
     digitalWrite(LED_YELLOW, LOW);
-    digitalWrite(FOCUS_LED, LOW);
+    digitalWrite(focusLed,   LOW);
 
-    // If it was a short tap (< 500ms) and the device is ON
     if (duration < 500 && currentState != STATE_OFF) {
-        clickCount++;
-        lastReleaseTime = millis();
+      clickCount++;
+      lastReleaseTime = millis();
     }
   }
-  if (clickCount > 0 && (millis() - lastReleaseTime > 400)) { // 400ms window
-    if (clickCount == 3) {
-        // Toggle Logic
-        if (currentState == STATE_FIDGET) transitionTo(STATE_SCROLL);
-        else transitionTo(STATE_FIDGET);
-    }
-    clickCount = 0; // Reset counter
-  }
-  
-  // Only force everything off if we are in STATE_OFF AND the user isn't holding the button
-  if (currentState == STATE_OFF && !isHolding) {
-          setRGB(0, 0, 0);
-          clearAll();
-          noTone(BUZZER_PIN);
-          enterIdle();
+
+  // ── Double-click → toggle FIDGET ↔ SCROLL ────────────────────────────────
+  if (clickCount > 0 && (millis() - lastReleaseTime > 400)) {
+    if (clickCount == 2) {
+      if (currentState == STATE_FIDGET) {
+        transitionTo(STATE_SCROLL);
+      } else if (currentState == STATE_SCROLL) {
+        transitionTo(STATE_FIDGET);
       }
+    }
+    clickCount = 0;
+  }
 
-}
-
-void enterBreak(unsigned long duration) {
-  currentTimerState = TIMER_BREAK;
-  sessionStart = millis();
-  sessionLen   = duration;
-  setRGB(0, 200, 0);  // green = rest
-  showCount();
-  if (duration == LONG_BREAK_DURATION) {
-    Serial.println(F("[LONG BREAK] 15:00 started"));
-  } else {
-    Serial.println(F("[BREAK] 5:00 started"));
+  // Keep everything off while device is off (and not mid-press)
+  if (currentState == STATE_OFF && !isHolding) {
+    setRGB(0, 0, 0);
+    clearAll();
   }
 }
 
-void enterAlert(int after) {
-  currentTimerState = TIMER_ALERT;
-  nextState    = after;
-  alertStart   = millis();
-  Serial.println(F("[ALERT] time's up!"));
-}
-
-void resetAll() {
-  pomodoroCount = 0;
-  nextState     = TIMER_WORK;
-  enterIdle();
-  Serial.println(F("[RESET]"));
-}
-
-// ── Setup ──────────────────────────────────────────────────────────────────────
+// ── Setup ───────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(9600);
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(STICK_BTN,  INPUT_PULLUP);
 
-  pinMode(RGB_R,     OUTPUT);
-  pinMode(RGB_G,     OUTPUT);
-  pinMode(RGB_B,     OUTPUT);
+  pinMode(RGB_R,      OUTPUT);
+  pinMode(RGB_G,      OUTPUT);
+  pinMode(RGB_B,      OUTPUT);
   pinMode(LED_RED,    OUTPUT);
   pinMode(LED_YELLOW, OUTPUT);
   pinMode(LED_GREEN,  OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
 
-  enterIdle();
+  Serial.println(F("FLOW_FIDGET_READY"));
+  transitionTo(STATE_OFF);
+  Serial.println(F("[OFF] long-press to start"));
 }
 
-// ── Loop ───────────────────────────────────────────────────────────────────────
+// ── Loop ────────────────────────────────────────────────────────────────────
 void loop() {
-  int BUTTON_VALUE = digitalRead(BUTTON_PIN);
+  buttonInteraction();
+
   switch (currentState) {
     case STATE_OFF:
-      buttonInteraction();
       break;
+
     case STATE_FIDGET:
-      buttonInteraction();
+      checkActivity();
+      updateInactivityLEDs();
       break;
+
     case STATE_SCROLL: {
-      buttonInteraction();   
-      int rawY = analogRead(JOY_Y);
+      checkActivity();
+      updateInactivityLEDs();
+
+      int rawY   = analogRead(JOY_Y);
       int offset = rawY - JOY_CENTER;
-      bool active = abs(offset) > DEAD_ZONE;
 
-      if (active) {
-        lastActivityTime = millis();
-        noTone(BUZZER_PIN);
-      }
-
-      if (active && millis() - lastScrollTick >= SCROLL_INTERVAL_MS) {
+      if (abs(offset) > DEAD_ZONE && millis() - lastScrollTick >= SCROLL_INTERVAL_MS) {
         lastScrollTick = millis();
-        int direction = (offset > 0) ? 1 : -1;
-        int magnitude = abs(offset) - DEAD_ZONE;
-        int speed = map(magnitude, 0, JOY_CENTER - DEAD_ZONE, 1, SCROLL_MAX);
+        int direction  = (offset > 0) ? 1 : -1;
+        int magnitude  = abs(offset) - DEAD_ZONE;
+        int speed      = map(magnitude, 0, JOY_CENTER - DEAD_ZONE, 1, SCROLL_MAX);
         speed = constrain(speed, 1, SCROLL_MAX);
 
         Serial.print(F("SCROLL:"));
@@ -303,28 +279,7 @@ void loop() {
         Serial.print(F(":"));
         Serial.println(speed);
       }
-
-      unsigned long idleTime = millis() - lastActivityTime;
-
-      if (idleTime < IDLE_YELLOW_MS) {
-        setRGB(0, 255, 0);
-      } else if (idleTime < IDLE_FLASH_MS) {
-        setRGB(255, 200, 0);
-      } else if (idleTime < IDLE_ALARM_MS) {
-        bool flashOn = (millis() / FLASH_PERIOD_MS) % 2 == 0;
-        if (flashOn) {
-          setRGB(255, 200, 0);
-        } else {
-          setRGB(0, 0, 0);
-        }
-      } else {
-        setRGB(255, 0, 0);
-        tone(BUZZER_PIN, 1000);
-      }
       break;
     }
-
-  } 
-
+  }
 }
-
