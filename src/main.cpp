@@ -133,7 +133,7 @@ void transitionTo(int newState) {
 
         case STATE_FIDGET:
             Serial.println("System: Fidget Mode"); 
-            setRGB(135, 61, 22); // White for Fidget
+            setRGB(0, 255, 0); // Green for Fidget
             break;
 
         case STATE_SCROLL:
@@ -206,9 +206,10 @@ void buttonInteraction() {
         lastReleaseTime = millis();
     }
   }
-  if (clickCount > 0 && (millis() - lastReleaseTime > 400)) { // 400ms window
+  if (clickCount > 0 && (millis() - lastReleaseTime > 1000)) { // 1000ms window
     if (clickCount == 3) {
         // Toggle Logic
+        Serial.println("change state");
         if (currentState == STATE_FIDGET) transitionTo(STATE_SCROLL);
         else transitionTo(STATE_FIDGET);
     }
@@ -218,9 +219,6 @@ void buttonInteraction() {
   // Only force everything off if we are in STATE_OFF AND the user isn't holding the button
   if (currentState == STATE_OFF && !isHolding) {
           setRGB(0, 0, 0);
-          clearAll();
-          noTone(BUZZER_PIN);
-          enterIdle();
       }
 
 }
